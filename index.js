@@ -1,12 +1,16 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const bodyParser = require("body-parser");
+const dns = require("dns");
 const app = express();
 
 // Basic Configuration
 const port = process.env.PORT || 3000;
 
 app.use(cors());
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
 app.use("/public", express.static(`${process.cwd()}/public`));
 
@@ -14,41 +18,51 @@ app.get("/", function (req, res) {
   res.sendFile(process.cwd() + "/views/index.html");
 });
 
+// In-memory storage for shortened URLs
+const urlDatabase = {};
+let urlCounter = 1;
+
 // Your first API endpoint
 app.get("/api/hello", function (req, res) {
   res.json({ greeting: "hello API" });
 });
 
-const urlDatabase = {};
+// API endpoint to shorten URLs
+app.post("/api/shorturl", function (req, res) {
+  const originalUrl = req.body.url;
 
-function generateShortCode() {
-  return Math.random().toString(36).substring(2, 8);
-}
-
-app.post("/api/shortUrl", (req, res) => {
-  const { url } = req.body;
-  if (!url) {
-    return res.status(400).json({ error: "url is required" });
+  // Validate the URL format
+  const urlPattern = /^(http:\/\/|https:\/\/)/;
+  if (!urlPattern.test(originalUrl)) {
+    return res.json({ error: "invalid url" });
   }
 
-  const shortCode = generateShortCode();
+  // Extract the hostname from the URL
+  const { hostname } = new URL(originalUrl);
 
-  urlDatabase[shortCode] = url;
+  // Verify the URL using dns.lookup
+  dns.lookup(hostname, (err) => {
+    if (err) {
+      return res.json({ error: "invalid url" });
+    }
 
-  res.json({
-    originalUrl: url,
-    short_url: `${req.protocol}://${req.get("host")}/api/${shortCode}`,
+    // Store the URL in the database
+    const shortUrl = urlCounter++;
+    urlDatabase[shortUrl] = originalUrl;
+
+    res.json({ original_url: originalUrl, short_url: shortUrl });
   });
 });
 
-app.get("/api/:shortCode", (req, res) => {
-  const shortCode = req.params.shortCode;
-  const originalUrl = urlDatabase[shortCode];
+// Redirect endpoint for shortened URLs
+app.get("/api/shorturl/:shorturl", function (req, res) {
+  const shortUrl = req.params.shorturl;
+  const originalUrl = urlDatabase[shortUrl];
 
   if (originalUrl) {
     res.redirect(originalUrl);
   } else {
-    res.status(404).json({ error: "Shortended URL not found" });
+    res.json({ error: "No short URL found for the given input" });
   }
 });
 
